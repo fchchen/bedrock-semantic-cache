@@ -21,7 +21,7 @@ RUN dotnet publish "Web.csproj" -c Release -o /app/publish
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
-RUN adduser --disabled-password --no-create-home appuser
+RUN useradd --no-create-home appuser
 COPY --from=publish /app/publish .
 USER appuser
 EXPOSE 5000
