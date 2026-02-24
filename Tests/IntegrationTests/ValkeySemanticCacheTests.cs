@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Core.Entities;
+using Core.Settings;
 using FluentAssertions;
 using Infrastructure;
+using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 using Testcontainers.Redis;
 using Xunit;
@@ -23,7 +25,7 @@ public class ValkeySemanticCacheTests : IAsyncLifetime
     {
         await _redisContainer.StartAsync();
         _redis = await ConnectionMultiplexer.ConnectAsync(_redisContainer.GetConnectionString());
-        _cache = new ValkeySemanticCache(_redis);
+        _cache = new ValkeySemanticCache(_redis, Options.Create(new OrchestratorSettings()));
     }
 
     public async Task DisposeAsync()

@@ -2,8 +2,10 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Core.Entities;
+using Core.Settings;
 using FluentAssertions;
 using Infrastructure;
+using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 using Testcontainers.Redis;
 using Xunit;
@@ -22,7 +24,7 @@ public class ValkeyDocumentStoreTests : IAsyncLifetime
     {
         await _redisContainer.StartAsync();
         _redis = await ConnectionMultiplexer.ConnectAsync(_redisContainer.GetConnectionString());
-        _store = new ValkeyDocumentStore(_redis);
+        _store = new ValkeyDocumentStore(_redis, Options.Create(new OrchestratorSettings()));
     }
 
     public async Task DisposeAsync()

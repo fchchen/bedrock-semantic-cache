@@ -1,5 +1,7 @@
 using Core.Entities;
 using Core.Interfaces;
+using Core.Settings;
+using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 using System.Text.Json;
 
@@ -11,13 +13,13 @@ public class ValkeyDocumentStore : IDocumentStore
     private const string IndexName = "idx:documents";
     private const string KeyPrefix = "doc:";
 
-    public ValkeyDocumentStore(IConnectionMultiplexer redis)
+    public ValkeyDocumentStore(IConnectionMultiplexer redis, IOptions<OrchestratorSettings> options)
     {
         _db = redis.GetDatabase();
-        CreateIndexIfNotExists();
+        CreateIndexIfNotExists(options.Value.VectorDimension);
     }
 
-    private void CreateIndexIfNotExists()
+    private void CreateIndexIfNotExists(int vectorDimension)
     {
         try
         {
@@ -35,7 +37,7 @@ public class ValkeyDocumentStore : IDocumentStore
                 "DocumentId", "TAG",
                 "ChunkIndex", "NUMERIC",
                 "IngestTimestamp", "NUMERIC",
-                "Vector", "VECTOR", "HNSW", "6", "TYPE", "FLOAT32", "DIM", "1536", "DISTANCE_METRIC", "COSINE"
+                "Vector", "VECTOR", "HNSW", "6", "TYPE", "FLOAT32", "DIM", vectorDimension.ToString(), "DISTANCE_METRIC", "COSINE"
             };
             _db.Execute("FT.CREATE", args);
         }

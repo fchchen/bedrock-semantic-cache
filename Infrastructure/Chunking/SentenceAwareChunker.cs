@@ -3,10 +3,13 @@ using System.Text.RegularExpressions;
 
 namespace Infrastructure.Chunking;
 
-public class SentenceAwareChunker : IChunkingStrategy
+public partial class SentenceAwareChunker : IChunkingStrategy
 {
     private readonly int _targetChunkSize;
     private readonly int _overlap;
+
+    [GeneratedRegex(@"(?<=[.!?])\s+(?=[A-Z])")]
+    private static partial Regex SentenceBoundaryRegex();
 
     public SentenceAwareChunker(int targetChunkSize = 512, int overlap = 50)
     {
@@ -18,8 +21,7 @@ public class SentenceAwareChunker : IChunkingStrategy
     {
         if (string.IsNullOrEmpty(text)) return new List<string>();
 
-        // Naive sentence splitting based on punctuation.
-        var sentences = Regex.Split(text, @"(?<=[.!?])\s+(?=[A-Z])");
+        var sentences = SentenceBoundaryRegex().Split(text);
 
         var chunks = new List<string>();
         string currentChunk = "";

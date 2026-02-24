@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Core.Entities;
 using Core.Interfaces;
+using Core.Settings;
+using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 
 namespace Infrastructure;
@@ -12,13 +14,13 @@ public class ValkeySemanticCache : ISemanticCache
     private const string KeyPrefix = "cache:";
     private readonly TimeSpan _defaultTtl = TimeSpan.FromHours(24);
 
-    public ValkeySemanticCache(IConnectionMultiplexer redis)
+    public ValkeySemanticCache(IConnectionMultiplexer redis, IOptions<OrchestratorSettings> options)
     {
         _db = redis.GetDatabase();
-        CreateIndexIfNotExists();
+        CreateIndexIfNotExists(options.Value.VectorDimension);
     }
 
-    private void CreateIndexIfNotExists()
+    private void CreateIndexIfNotExists(int vectorDimension)
     {
         try
         {
@@ -34,7 +36,7 @@ public class ValkeySemanticCache : ISemanticCache
                 "SCHEMA",
                 "Prompt", "TEXT",
                 "Response", "TEXT",
-                "Vector", "VECTOR", "HNSW", "6", "TYPE", "FLOAT32", "DIM", "1536", "DISTANCE_METRIC", "COSINE",
+                "Vector", "VECTOR", "HNSW", "6", "TYPE", "FLOAT32", "DIM", vectorDimension.ToString(), "DISTANCE_METRIC", "COSINE",
                 "SourceChunkIdsTag", "TAG"
             };
             _db.Execute("FT.CREATE", args);

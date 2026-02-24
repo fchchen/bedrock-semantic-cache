@@ -47,6 +47,8 @@ public class IngestPipeline : IIngestPipeline
         return job;
     }
 
+    private const int MaxConcurrentEmbeddings = 5;
+
     private async Task ProcessAsync(IngestJob job, string content)
     {
         try
@@ -57,26 +59,41 @@ public class IngestPipeline : IIngestPipeline
             job.ChunkCount = textChunks.Count;
             _jobStore.AddOrUpdate(job);
 
-            int charOffset = 0;
+            // Pre-compute char offsets so we can parallelize embedding + storage
+            var offsets = new int[textChunks.Count];
+            int offset = 0;
             for (int i = 0; i < textChunks.Count; i++)
             {
-                var text = textChunks[i];
-                var vector = await _embeddingService.GetEmbeddingAsync(text);
-
-                var chunk = new DocumentChunk
-                {
-                    Id = Guid.NewGuid().ToString(),
-                    DocumentId = job.DocumentId,
-                    Text = text,
-                    Vector = vector,
-                    ChunkIndex = i,
-                    CharOffset = charOffset,
-                    IngestTimestamp = DateTimeOffset.UtcNow
-                };
-
-                await _documentStore.StoreChunkAsync(chunk);
-                charOffset += text.Length;
+                offsets[i] = offset;
+                offset += textChunks[i].Length;
             }
+
+            using var semaphore = new SemaphoreSlim(MaxConcurrentEmbeddings);
+            var tasks = textChunks.Select(async (text, i) =>
+            {
+                await semaphore.WaitAsync();
+                try
+                {
+                    var vector = await _embeddingService.GetEmbeddingAsync(text);
+                    var chunk = new DocumentChunk
+                    {
+                        Id = Guid.NewGuid().ToString(),
+                        DocumentId = job.DocumentId,
+                        Text = text,
+                        Vector = vector,
+                        ChunkIndex = i,
+                        CharOffset = offsets[i],
+                        IngestTimestamp = DateTimeOffset.UtcNow
+                    };
+                    await _documentStore.StoreChunkAsync(chunk);
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            });
+
+            await Task.WhenAll(tasks);
 
             job.Status = "Done";
             _jobStore.AddOrUpdate(job);
