@@ -36,9 +36,11 @@ builder.Services.AddSingleton<ILlmService, ClaudeLlmService>();
 builder.Services.AddSingleton<IDocumentStore, ValkeyDocumentStore>();
 builder.Services.AddSingleton<ISemanticCache, ValkeySemanticCache>();
 
-// Background Task Queue
-builder.Services.AddSingleton<IBackgroundTaskQueue, BackgroundTaskQueue>();
-builder.Services.AddHostedService<BackgroundTaskProcessor>();
+// Background Task Queues (separate workers to avoid head-of-line blocking)
+builder.Services.AddSingleton<IIngestTaskQueue, IngestTaskQueue>();
+builder.Services.AddSingleton<ICacheTaskQueue, CacheTaskQueue>();
+builder.Services.AddHostedService<BackgroundTaskProcessor<IIngestTaskQueue>>();
+builder.Services.AddHostedService<BackgroundTaskProcessor<ICacheTaskQueue>>();
 
 // Core Services
 builder.Services.AddSingleton<IChunkingStrategy, SentenceAwareChunker>();

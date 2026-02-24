@@ -65,19 +65,19 @@ Question: {prompt}";
             }
         };
 
-        var request = new InvokeModelRequest
-        {
-            ModelId = ModelId,
-            ContentType = "application/json",
-            Accept = "application/json",
-            Body = new MemoryStream(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload)))
-        };
+        var bodyBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload));
 
         var stopwatch = Stopwatch.StartNew();
 
         try
         {
-            var response = await _retryPolicy.ExecuteAsync(() => _bedrockClient.InvokeModelAsync(request));
+            var response = await _retryPolicy.ExecuteAsync(() => _bedrockClient.InvokeModelAsync(new InvokeModelRequest
+            {
+                ModelId = ModelId,
+                ContentType = "application/json",
+                Accept = "application/json",
+                Body = new MemoryStream(bodyBytes)
+            }));
             
             stopwatch.Stop();
             _logger.LogInformation("Successfully generated LLM response. Model: {ModelId}, Latency: {LatencyMs}ms", ModelId, stopwatch.ElapsedMilliseconds);

@@ -123,10 +123,10 @@ public class ChatOrchestratorTests
 }
 
 /// <summary>
-/// Test double for IBackgroundTaskQueue that captures work items
+/// Test double for ICacheTaskQueue that captures work items
 /// and allows draining them synchronously in tests.
 /// </summary>
-internal class InlineBackgroundTaskQueue : IBackgroundTaskQueue
+internal class InlineBackgroundTaskQueue : ICacheTaskQueue
 {
     private readonly List<Func<CancellationToken, Task>> _items = new();
 

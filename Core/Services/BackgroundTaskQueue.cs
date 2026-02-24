@@ -8,6 +8,9 @@ public interface IBackgroundTaskQueue
     ValueTask<Func<CancellationToken, Task>> DequeueAsync(CancellationToken cancellationToken);
 }
 
+public interface IIngestTaskQueue : IBackgroundTaskQueue { }
+public interface ICacheTaskQueue : IBackgroundTaskQueue { }
+
 public class BackgroundTaskQueue : IBackgroundTaskQueue
 {
     private readonly Channel<Func<CancellationToken, Task>> _queue;
@@ -30,4 +33,14 @@ public class BackgroundTaskQueue : IBackgroundTaskQueue
     {
         return await _queue.Reader.ReadAsync(cancellationToken);
     }
+}
+
+public class IngestTaskQueue : BackgroundTaskQueue, IIngestTaskQueue
+{
+    public IngestTaskQueue() : base(100) { }
+}
+
+public class CacheTaskQueue : BackgroundTaskQueue, ICacheTaskQueue
+{
+    public CacheTaskQueue() : base(100) { }
 }

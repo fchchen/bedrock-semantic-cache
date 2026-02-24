@@ -12,7 +12,7 @@ public class ChatOrchestrator
     private readonly ISemanticCache _semanticCache;
     private readonly RetrieverService _retrieverService;
     private readonly ILlmService _llmService;
-    private readonly IBackgroundTaskQueue _backgroundQueue;
+    private readonly ICacheTaskQueue _backgroundQueue;
     private readonly ILogger<ChatOrchestrator> _logger;
     private readonly OrchestratorSettings _settings;
 
@@ -21,7 +21,7 @@ public class ChatOrchestrator
         ISemanticCache semanticCache,
         RetrieverService retrieverService,
         ILlmService llmService,
-        IBackgroundTaskQueue backgroundQueue,
+        ICacheTaskQueue backgroundQueue,
         IOptions<OrchestratorSettings> options,
         ILogger<ChatOrchestrator> logger)
     {

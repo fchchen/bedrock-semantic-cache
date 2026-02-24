@@ -10,7 +10,7 @@ public class IngestPipeline : IIngestPipeline
     private readonly IEmbeddingService _embeddingService;
     private readonly IDocumentStore _documentStore;
     private readonly JobStore _jobStore;
-    private readonly IBackgroundTaskQueue _backgroundQueue;
+    private readonly IIngestTaskQueue _backgroundQueue;
     private readonly ILogger<IngestPipeline> _logger;
 
     public IngestPipeline(
@@ -18,7 +18,7 @@ public class IngestPipeline : IIngestPipeline
         IEmbeddingService embeddingService,
         IDocumentStore documentStore,
         JobStore jobStore,
-        IBackgroundTaskQueue backgroundQueue,
+        IIngestTaskQueue backgroundQueue,
         ILogger<IngestPipeline> logger)
     {
         _chunker = chunker;

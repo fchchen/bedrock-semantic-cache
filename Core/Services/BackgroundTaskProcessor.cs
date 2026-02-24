@@ -3,12 +3,12 @@ using Microsoft.Extensions.Logging;
 
 namespace Core.Services;
 
-public class BackgroundTaskProcessor : BackgroundService
+public class BackgroundTaskProcessor<TQueue> : BackgroundService where TQueue : IBackgroundTaskQueue
 {
-    private readonly IBackgroundTaskQueue _taskQueue;
-    private readonly ILogger<BackgroundTaskProcessor> _logger;
+    private readonly TQueue _taskQueue;
+    private readonly ILogger<BackgroundTaskProcessor<TQueue>> _logger;
 
-    public BackgroundTaskProcessor(IBackgroundTaskQueue taskQueue, ILogger<BackgroundTaskProcessor> logger)
+    public BackgroundTaskProcessor(TQueue taskQueue, ILogger<BackgroundTaskProcessor<TQueue>> logger)
     {
         _taskQueue = taskQueue;
         _logger = logger;
