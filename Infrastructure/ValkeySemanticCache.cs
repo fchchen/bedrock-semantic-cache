@@ -84,14 +84,24 @@ public class ValkeySemanticCache : ISemanticCache
 
         var result = await _db.ExecuteAsync("FT.SEARCH", args);
         var searchResults = (RedisResult[])result!;
-        
-        if (searchResults.Length <= 1)
+
+        if (searchResults.Length < 3)
         {
-            return null; // No results
+            return null; // No results or expired key with no fields
         }
 
         var key = (string)searchResults[1]!;
-        var fields = (RedisResult[])searchResults[2]!;
+
+        // Expired keys may still appear in the index without field data
+        RedisResult[] fields;
+        try
+        {
+            fields = (RedisResult[])searchResults[2]!;
+        }
+        catch (InvalidCastException)
+        {
+            return null;
+        }
         
         var entry = new CacheEntry();
         double score = 0;
@@ -134,30 +144,62 @@ public class ValkeySemanticCache : ISemanticCache
             return;
         }
 
-        // Build a tag query like @SourceChunkIdsTag:{id1 | id2 | id3}
-        var tags = string.Join(" | ", chunkIds.Select(id => id.Replace("-", "\\-"))); // Escape hyphens for tag query
+        var tags = string.Join(" | ", chunkIds.Select(EscapeTagValue));
         var query = $"@SourceChunkIdsTag:{{{tags}}}";
-        
-        var args = new object[]
-        {
-            IndexName,
-            query,
-            "NOCONTENT"
-        };
+        const int pageSize = 1000;
 
-        var result = await _db.ExecuteAsync("FT.SEARCH", args);
-        var searchResults = (RedisResult[])result!;
-        
-        var keysToDelete = new List<RedisKey>();
-        for (int i = 1; i < searchResults.Length; i++)
+        while (true)
         {
-            keysToDelete.Add((string)searchResults[i]!);
-        }
+            // Always query offset 0 since we delete results each iteration
+            var args = new object[]
+            {
+                IndexName, query, "NOCONTENT",
+                "LIMIT", "0", pageSize.ToString()
+            };
 
-        if (keysToDelete.Any())
-        {
+            var result = await _db.ExecuteAsync("FT.SEARCH", args);
+            var searchResults = (RedisResult[])result!;
+
+            var keysToDelete = new List<RedisKey>();
+            for (int i = 1; i < searchResults.Length; i++)
+            {
+                keysToDelete.Add((string)searchResults[i]!);
+            }
+
+            if (!keysToDelete.Any())
+                break;
+
             await _db.KeyDeleteAsync(keysToDelete.ToArray());
+
+            var totalCount = (int)searchResults[0];
+            if (keysToDelete.Count >= totalCount)
+                break;
         }
+    }
+
+    private static string EscapeTagValue(string value)
+    {
+        return value
+            .Replace("\\", "\\\\")
+            .Replace("-", "\\-")
+            .Replace(".", "\\.")
+            .Replace("@", "\\@")
+            .Replace(":", "\\:")
+            .Replace("/", "\\/")
+            .Replace("!", "\\!")
+            .Replace("{", "\\{")
+            .Replace("}", "\\}")
+            .Replace("(", "\\(")
+            .Replace(")", "\\)")
+            .Replace("[", "\\[")
+            .Replace("]", "\\]")
+            .Replace("^", "\\^")
+            .Replace("~", "\\~")
+            .Replace("*", "\\*")
+            .Replace("'", "\\'")
+            .Replace("\"", "\\\"")
+            .Replace("|", "\\|")
+            .Replace(" ", "\\ ");
     }
 
     private byte[] GetVectorBytes(float[] vector)

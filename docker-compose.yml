@@ -1,23 +1,32 @@
 services:
   valkey:
-    image: redis/redis-stack-server:latest
+    image: redis/redis-stack-server:7.4.0-v3
     ports:
       - "6379:6379"
       - "8001:8001" # Redis Insight
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
 
   jaeger:
-    image: jaegertracing/all-in-one:latest
+    image: jaegertracing/all-in-one:1.67
     ports:
       - "16686:16686" # Web UI
       - "4317:4317"  # OTLP gRPC
       - "4318:4318"  # OTLP HTTP
+    restart: unless-stopped
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.2.1
     ports:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    restart: unless-stopped
 
   api:
     build: .
@@ -27,5 +36,8 @@ services:
       - ConnectionStrings__Redis=valkey:6379
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
     depends_on:
-      - valkey
-      - jaeger
+      valkey:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    restart: unless-stopped

@@ -1,0 +1,14 @@
+.git
+.vs
+.vscode
+.idea
+bin
+obj
+Tests
+*.md
+*.sln
+*.slnx
+.dockerignore
+.gitignore
+docker-compose.yml
+prometheus.yml

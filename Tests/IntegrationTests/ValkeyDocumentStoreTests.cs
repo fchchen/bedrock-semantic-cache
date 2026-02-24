@@ -12,12 +12,11 @@ namespace Tests.IntegrationTests;
 
 public class ValkeyDocumentStoreTests : IAsyncLifetime
 {
-    private RedisContainer _redisContainer = new RedisBuilder()
-        .WithImage("redis/redis-stack-server:latest") // Use redis-stack to get RediSearch/Vector search
+    private readonly RedisContainer _redisContainer = new RedisBuilder("redis/redis-stack-server:latest")
         .Build();
 
-    private IConnectionMultiplexer _redis;
-    private ValkeyDocumentStore _store;
+    private IConnectionMultiplexer _redis = null!;
+    private ValkeyDocumentStore _store = null!;
 
     public async Task InitializeAsync()
     {
@@ -49,11 +48,15 @@ public class ValkeyDocumentStoreTests : IAsyncLifetime
 
         // Act
         await _store.StoreChunkAsync(chunk);
-        
-        // Let Redis index it
-        await Task.Delay(100);
 
         var searchVector = Enumerable.Repeat(0.1f, 1536).ToArray();
+
+        await TestHelpers.WaitUntilAsync(async () =>
+        {
+            var r = await _store.SearchAsync(searchVector, 5);
+            return r.Any();
+        });
+
         var results = await _store.SearchAsync(searchVector, 5);
 
         // Assert
@@ -74,14 +77,20 @@ public class ValkeyDocumentStoreTests : IAsyncLifetime
         await _store.StoreChunkAsync(chunk1);
         await _store.StoreChunkAsync(chunk2);
         await _store.StoreChunkAsync(chunk3);
-        await Task.Delay(100); // let index catch up
+
+        var db = _redis.GetDatabase();
+        await TestHelpers.WaitUntilAsync(async () =>
+            await db.KeyExistsAsync($"doc:{chunk1.Id}") &&
+            await db.KeyExistsAsync($"doc:{chunk2.Id}") &&
+            await db.KeyExistsAsync($"doc:{chunk3.Id}"));
 
         // Act
         await _store.DeleteByDocumentIdAsync(docId);
-        await Task.Delay(100); // let delete finish
+
+        await TestHelpers.WaitUntilAsync(async () =>
+            !await db.KeyExistsAsync($"doc:{chunk1.Id}"));
 
         // Assert
-        var db = _redis.GetDatabase();
         var exists1 = await db.KeyExistsAsync($"doc:{chunk1.Id}");
         var exists2 = await db.KeyExistsAsync($"doc:{chunk2.Id}");
         var exists3 = await db.KeyExistsAsync($"doc:{chunk3.Id}");

@@ -36,11 +36,16 @@ builder.Services.AddSingleton<ILlmService, ClaudeLlmService>();
 builder.Services.AddSingleton<IDocumentStore, ValkeyDocumentStore>();
 builder.Services.AddSingleton<ISemanticCache, ValkeySemanticCache>();
 
+// Background Task Queue
+builder.Services.AddSingleton<IBackgroundTaskQueue, BackgroundTaskQueue>();
+builder.Services.AddHostedService<BackgroundTaskProcessor>();
+
 // Core Services
 builder.Services.AddSingleton<IChunkingStrategy, SentenceAwareChunker>();
 builder.Services.AddSingleton<RetrieverService>();
 builder.Services.AddSingleton<ChatOrchestrator>();
 builder.Services.AddSingleton<IIngestPipeline, IngestPipeline>();
+builder.Services.AddSingleton<JobStore>();
 
 // OpenTelemetry
 var resourceBuilder = ResourceBuilder.CreateDefault().AddService("BedrockSemanticCache");
@@ -62,15 +67,26 @@ builder.Services.AddOpenTelemetry()
 builder.Services.AddHealthChecks()
     .AddCheck<Web.Health.ValkeyHealthCheck>("Valkey");
 
+// ProblemDetails for consistent error responses
+builder.Services.AddProblemDetails();
+
 var app = builder.Build();
+
+app.UseExceptionHandler();
+app.UseStatusCodePages();
 
 // Middlewares
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<SemanticCacheMiddleware>();
 
 // Endpoints
+const int MaxContentLength = 10 * 1024 * 1024; // 10 MB
+
 app.MapPost("/chat", async (ChatRequest request, ChatOrchestrator orchestrator, HttpContext context) =>
 {
+    if (string.IsNullOrWhiteSpace(request.Prompt))
+        return Results.Problem("Prompt is required.", statusCode: 400);
+
     var response = await orchestrator.ProcessChatAsync(request.Prompt);
     context.Response.Headers["X-Cache-Status"] = response.CacheStatus;
     return Results.Ok(response);
@@ -78,22 +94,47 @@ app.MapPost("/chat", async (ChatRequest request, ChatOrchestrator orchestrator, 
 
 app.MapPost("/ingest", async (IngestRequest request, IIngestPipeline pipeline) =>
 {
+    if (string.IsNullOrWhiteSpace(request.DocumentId))
+        return Results.Problem("DocumentId is required.", statusCode: 400);
+    if (string.IsNullOrWhiteSpace(request.FileName))
+        return Results.Problem("FileName is required.", statusCode: 400);
+    if (string.IsNullOrWhiteSpace(request.Content))
+        return Results.Problem("Content is required.", statusCode: 400);
+    if (request.Content.Length > MaxContentLength)
+        return Results.Problem($"Content exceeds maximum size of {MaxContentLength / 1024 / 1024} MB.", statusCode: 400);
+
     var job = await pipeline.IngestAsync(request.DocumentId, request.FileName, request.Content);
     return Results.Accepted($"/ingest/{job.Id}", job);
 });
 
+app.MapGet("/ingest/{id}", (string id, JobStore jobStore) =>
+{
+    var job = jobStore.GetJob(id);
+    return job is not null ? Results.Ok(job) : Results.NotFound();
+});
+
 app.MapPost("/ingest/{documentId}/reingest", async (string documentId, IngestRequest request, IIngestPipeline pipeline, ISemanticCache cache, IDocumentStore store) =>
 {
-    // Implementation of cache invalidation on re-ingest
+    if (string.IsNullOrWhiteSpace(request.FileName))
+        return Results.Problem("FileName is required.", statusCode: 400);
+    if (string.IsNullOrWhiteSpace(request.Content))
+        return Results.Problem("Content is required.", statusCode: 400);
+    if (request.Content.Length > MaxContentLength)
+        return Results.Problem($"Content exceeds maximum size of {MaxContentLength / 1024 / 1024} MB.", statusCode: 400);
+
+    // Retrieve old chunk IDs to invalidate semantic cache
+    var oldChunkIds = await store.GetChunkIdsByDocumentIdAsync(documentId);
+    if (oldChunkIds.Any())
+    {
+        await cache.InvalidateByChunkIdsAsync(oldChunkIds);
+    }
+
     await store.DeleteByDocumentIdAsync(documentId);
-    // In a real app we'd need the old chunk IDs. 
-    // Simplified: invalidate by doc ID if we had it, or just let TTL handle it.
-    // Blueprint says: "Triggers DeleteByDocumentIdAsync on both stores"
     var job = await pipeline.IngestAsync(documentId, request.FileName, request.Content);
     return Results.Accepted($"/ingest/{job.Id}", job);
 });
 
-app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }));
+app.MapHealthChecks("/health");
 app.MapPrometheusScrapingEndpoint(); // /metrics
 
 app.Run();

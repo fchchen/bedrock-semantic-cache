@@ -9,17 +9,23 @@ public class IngestPipeline : IIngestPipeline
     private readonly IChunkingStrategy _chunker;
     private readonly IEmbeddingService _embeddingService;
     private readonly IDocumentStore _documentStore;
+    private readonly JobStore _jobStore;
+    private readonly IBackgroundTaskQueue _backgroundQueue;
     private readonly ILogger<IngestPipeline> _logger;
 
     public IngestPipeline(
         IChunkingStrategy chunker,
         IEmbeddingService embeddingService,
         IDocumentStore documentStore,
+        JobStore jobStore,
+        IBackgroundTaskQueue backgroundQueue,
         ILogger<IngestPipeline> logger)
     {
         _chunker = chunker;
         _embeddingService = embeddingService;
         _documentStore = documentStore;
+        _jobStore = jobStore;
+        _backgroundQueue = backgroundQueue;
         _logger = logger;
     }
 
@@ -34,8 +40,9 @@ public class IngestPipeline : IIngestPipeline
             Status = "Processing"
         };
 
-        // Fire and forget actual processing
-        _ = ProcessAsync(job, content);
+        _jobStore.AddOrUpdate(job);
+
+        await _backgroundQueue.EnqueueAsync(ct => ProcessAsync(job, content));
 
         return job;
     }
@@ -48,6 +55,7 @@ public class IngestPipeline : IIngestPipeline
 
             var textChunks = _chunker.Chunk(content);
             job.ChunkCount = textChunks.Count;
+            _jobStore.AddOrUpdate(job);
 
             int charOffset = 0;
             for (int i = 0; i < textChunks.Count; i++)
@@ -68,16 +76,16 @@ public class IngestPipeline : IIngestPipeline
 
                 await _documentStore.StoreChunkAsync(chunk);
                 charOffset += text.Length;
-                
-                // Track metric chunks_ingested_total (will be wired via OTel)
             }
 
             job.Status = "Done";
+            _jobStore.AddOrUpdate(job);
             _logger.LogInformation("Completed ingestion for {DocumentId}. Chunks: {Count}", job.DocumentId, textChunks.Count);
         }
         catch (Exception ex)
         {
             job.Status = "Failed";
+            _jobStore.AddOrUpdate(job);
             _logger.LogError(ex, "Failed ingestion for {DocumentId}", job.DocumentId);
         }
     }

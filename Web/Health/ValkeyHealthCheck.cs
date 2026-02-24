@@ -12,10 +12,17 @@ public class ValkeyHealthCheck : IHealthCheck
         _redis = redis;
     }
 
-    public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
+    public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
     {
-        return _redis.IsConnected 
-            ? Task.FromResult(HealthCheckResult.Healthy()) 
-            : Task.FromResult(HealthCheckResult.Unhealthy());
+        try
+        {
+            var db = _redis.GetDatabase();
+            var latency = await db.PingAsync();
+            return HealthCheckResult.Healthy($"Valkey responded in {latency.TotalMilliseconds:F1}ms");
+        }
+        catch (Exception ex)
+        {
+            return HealthCheckResult.Unhealthy("Valkey ping failed.", ex);
+        }
     }
 }

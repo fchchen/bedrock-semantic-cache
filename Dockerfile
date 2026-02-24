@@ -13,5 +13,10 @@ RUN dotnet publish "Web.csproj" -c Release -o /app/publish
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
+RUN adduser --disabled-password --no-create-home appuser
 COPY --from=publish /app/publish .
+USER appuser
+EXPOSE 5000
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD ["dotnet", "--list-runtimes", "||", "exit", "1"]
 ENTRYPOINT ["dotnet", "Web.dll"]

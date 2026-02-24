@@ -12,6 +12,7 @@ public class ChatOrchestrator
     private readonly ISemanticCache _semanticCache;
     private readonly RetrieverService _retrieverService;
     private readonly ILlmService _llmService;
+    private readonly IBackgroundTaskQueue _backgroundQueue;
     private readonly ILogger<ChatOrchestrator> _logger;
     private readonly OrchestratorSettings _settings;
 
@@ -20,6 +21,7 @@ public class ChatOrchestrator
         ISemanticCache semanticCache,
         RetrieverService retrieverService,
         ILlmService llmService,
+        IBackgroundTaskQueue backgroundQueue,
         IOptions<OrchestratorSettings> options,
         ILogger<ChatOrchestrator> logger)
     {
@@ -27,6 +29,7 @@ public class ChatOrchestrator
         _semanticCache = semanticCache;
         _retrieverService = retrieverService;
         _llmService = llmService;
+        _backgroundQueue = backgroundQueue;
         _logger = logger;
         _settings = options.Value;
     }
@@ -74,17 +77,10 @@ public class ChatOrchestrator
             ExpiresAt = DateTimeOffset.UtcNow.AddHours(_settings.TtlHours)
         };
 
-        _ = Task.Run(async () =>
+        await _backgroundQueue.EnqueueAsync(async ct =>
         {
-            try
-            {
-                await _semanticCache.StoreAsync(cacheEntry);
-                _logger.LogInformation("Successfully stored response in semantic cache.");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to store response in semantic cache.");
-            }
+            await _semanticCache.StoreAsync(cacheEntry);
+            _logger.LogInformation("Successfully stored response in semantic cache.");
         });
 
         // 7. Return response

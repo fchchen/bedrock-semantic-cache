@@ -13,12 +13,11 @@ namespace Tests.IntegrationTests;
 
 public class ValkeySemanticCacheTests : IAsyncLifetime
 {
-    private RedisContainer _redisContainer = new RedisBuilder()
-        .WithImage("redis/redis-stack-server:latest")
+    private readonly RedisContainer _redisContainer = new RedisBuilder("redis/redis-stack-server:latest")
         .Build();
 
-    private IConnectionMultiplexer _redis;
-    private ValkeySemanticCache _cache;
+    private IConnectionMultiplexer _redis = null!;
+    private ValkeySemanticCache _cache = null!;
 
     public async Task InitializeAsync()
     {
@@ -50,14 +49,20 @@ public class ValkeySemanticCacheTests : IAsyncLifetime
 
         // Act
         await _cache.StoreAsync(entry);
-        await Task.Delay(100);
 
         var searchVector = Enumerable.Repeat(0.5f, 1536).ToArray();
+
+        await TestHelpers.WaitUntilAsync(async () =>
+        {
+            var r = await _cache.SearchAsync(searchVector, 0.95);
+            return r != null;
+        });
+
         var result = await _cache.SearchAsync(searchVector, 0.95);
 
         // Assert
         result.Should().NotBeNull();
-        result.Item.Id.Should().Be(entry.Id);
+        result!.Item.Id.Should().Be(entry.Id);
         result.Item.Prompt.Should().Be(entry.Prompt);
         result.Item.SourceChunkIds.Should().BeEquivalentTo(entry.SourceChunkIds);
         result.Score.Should().BeGreaterThan(0.95);
@@ -80,9 +85,13 @@ public class ValkeySemanticCacheTests : IAsyncLifetime
         };
 
         await _cache.StoreAsync(entry);
-        
-        // Wait for TTL to expire
-        await Task.Delay(1000);
+
+        // Wait for TTL to expire via polling
+        await TestHelpers.WaitUntilAsync(async () =>
+        {
+            var r = await _cache.SearchAsync(vector, 0.0);
+            return r == null;
+        }, timeout: TimeSpan.FromSeconds(5));
 
         // Act
         var result = await _cache.SearchAsync(vector, 0.95);
@@ -102,14 +111,20 @@ public class ValkeySemanticCacheTests : IAsyncLifetime
         await _cache.StoreAsync(entry1);
         await _cache.StoreAsync(entry2);
         await _cache.StoreAsync(entry3);
-        await Task.Delay(100);
+
+        var db = _redis.GetDatabase();
+        await TestHelpers.WaitUntilAsync(async () =>
+            await db.KeyExistsAsync($"cache:{entry1.Id}") &&
+            await db.KeyExistsAsync($"cache:{entry2.Id}") &&
+            await db.KeyExistsAsync($"cache:{entry3.Id}"));
 
         // Act
         await _cache.InvalidateByChunkIdsAsync(new List<string> { "chunk-1" });
-        await Task.Delay(100);
+
+        await TestHelpers.WaitUntilAsync(async () =>
+            !await db.KeyExistsAsync($"cache:{entry1.Id}"));
 
         // Assert
-        var db = _redis.GetDatabase();
         var exists1 = await db.KeyExistsAsync($"cache:{entry1.Id}");
         var exists2 = await db.KeyExistsAsync($"cache:{entry2.Id}");
         var exists3 = await db.KeyExistsAsync($"cache:{entry3.Id}");

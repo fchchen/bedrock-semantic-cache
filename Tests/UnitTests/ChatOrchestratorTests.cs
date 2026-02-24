@@ -22,6 +22,7 @@ public class ChatOrchestratorTests
     private readonly RetrieverService _retriever;
     private readonly Mock<ILlmService> _mockLlm;
     private readonly ChatOrchestrator _orchestrator;
+    private readonly InlineBackgroundTaskQueue _backgroundQueue;
 
     public ChatOrchestratorTests()
     {
@@ -29,14 +30,17 @@ public class ChatOrchestratorTests
         _mockCache = new Mock<ISemanticCache>();
         _mockDocStore = new Mock<IDocumentStore>();
         _mockLlm = new Mock<ILlmService>();
-        
-        _retriever = new RetrieverService(_mockDocStore.Object)
-        {
-            TopK = 5,
-            MinScoreThreshold = 0.75
-        };
+        _backgroundQueue = new InlineBackgroundTaskQueue();
 
-        var options = Options.Create(new OrchestratorSettings { SimilarityThreshold = 0.85, TtlHours = 24 });
+        var options = Options.Create(new OrchestratorSettings
+        {
+            SimilarityThreshold = 0.85,
+            TtlHours = 24,
+            TopK = 5
+        });
+
+        _retriever = new RetrieverService(_mockDocStore.Object, options);
+
         var mockLogger = new Mock<ILogger<ChatOrchestrator>>();
 
         _orchestrator = new ChatOrchestrator(
@@ -44,6 +48,7 @@ public class ChatOrchestratorTests
             _mockCache.Object,
             _retriever,
             _mockLlm.Object,
+            _backgroundQueue,
             options,
             mockLogger.Object);
     }
@@ -56,8 +61,8 @@ public class ChatOrchestratorTests
         var vector = new[] { 0.1f, 0.2f };
         _mockEmbedding.Setup(e => e.GetEmbeddingAsync(prompt)).ReturnsAsync(vector);
 
-        var cachedEntry = new CacheEntry 
-        { 
+        var cachedEntry = new CacheEntry
+        {
             Response = "Cached Answer",
             SourceChunkIds = new List<string> { "chunk1" }
         };
@@ -99,9 +104,9 @@ public class ChatOrchestratorTests
 
         // Act
         var response = await _orchestrator.ProcessChatAsync(prompt);
-        
-        // Wait briefly for fire-and-forget background task to finish
-        await Task.Delay(50);
+
+        // Drain the background queue so the enqueued cache store executes
+        await _backgroundQueue.DrainAsync();
 
         // Assert
         response.Answer.Should().Be("LLM Answer");
@@ -110,9 +115,38 @@ public class ChatOrchestratorTests
 
         _mockDocStore.Verify(d => d.SearchAsync(vector, 5), Times.Once);
         _mockLlm.Verify(l => l.GenerateResponseAsync(prompt, It.Is<List<DocumentChunk>>(c => c.Count == 1)), Times.Once);
-        _mockCache.Verify(c => c.StoreAsync(It.Is<CacheEntry>(e => 
-            e.Prompt == prompt && 
-            e.Response == "LLM Answer" && 
+        _mockCache.Verify(c => c.StoreAsync(It.Is<CacheEntry>(e =>
+            e.Prompt == prompt &&
+            e.Response == "LLM Answer" &&
             e.SourceChunkIds.Contains("chunk1"))), Times.Once);
+    }
+}
+
+/// <summary>
+/// Test double for IBackgroundTaskQueue that captures work items
+/// and allows draining them synchronously in tests.
+/// </summary>
+internal class InlineBackgroundTaskQueue : IBackgroundTaskQueue
+{
+    private readonly List<Func<CancellationToken, Task>> _items = new();
+
+    public ValueTask EnqueueAsync(Func<CancellationToken, Task> workItem)
+    {
+        _items.Add(workItem);
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask<Func<CancellationToken, Task>> DequeueAsync(CancellationToken cancellationToken)
+    {
+        throw new NotSupportedException("Use DrainAsync in tests instead.");
+    }
+
+    public async Task DrainAsync()
+    {
+        foreach (var item in _items)
+        {
+            await item(CancellationToken.None);
+        }
+        _items.Clear();
     }
 }

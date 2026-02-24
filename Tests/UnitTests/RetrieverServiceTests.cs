@@ -5,7 +5,9 @@ using System.Threading.Tasks;
 using Core.Entities;
 using Core.Interfaces;
 using Core.Services;
+using Core.Settings;
 using FluentAssertions;
+using Microsoft.Extensions.Options;
 using Moq;
 using Xunit;
 
@@ -34,11 +36,13 @@ public class RetrieverServiceTests
         mockStore.Setup(s => s.SearchAsync(queryVector, It.IsAny<int>()))
                  .ReturnsAsync(mockResults);
 
-        var service = new RetrieverService(mockStore.Object)
+        var options = Options.Create(new OrchestratorSettings
         {
             TopK = 5,
-            MinScoreThreshold = 0.75
-        };
+            RetrievalMinScore = 0.75
+        });
+
+        var service = new RetrieverService(mockStore.Object, options);
 
         // Act
         var results = await service.RetrieveAsync(queryVector);

@@ -1,86 +1,146 @@
 # Bedrock Semantic Cache
 
-[![.NET 10](https://img.shields.io/badge/.NET-10-blue.svg)](https://dotnet.microsoft.com/download/dotnet/10.0)
-[![AWS Bedrock](https://img.shields.io/badge/AWS-Bedrock-orange.svg)](https://aws.amazon.com/bedrock/)
-[![Valkey](https://img.shields.io/badge/Valkey-Redis--Stack-red.svg)](https://valkey.io/)
+[![.NET 10](https://img.shields.io/badge/.NET-10-512BD4.svg)](https://dotnet.microsoft.com/download/dotnet/10.0)
+[![AWS Bedrock](https://img.shields.io/badge/AWS-Bedrock-FF9900.svg)](https://aws.amazon.com/bedrock/)
+[![Valkey](https://img.shields.io/badge/Valkey-Redis--Stack-DC382D.svg)](https://valkey.io/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A production-grade **Retrieval-Augmented Generation (RAG)** system with a **Semantic Caching** layer. Built using .NET Clean Architecture, AWS Bedrock (Claude 3.5 Sonnet + Titan), and Valkey (Redis Stack) for high-performance vector search.
+A **Retrieval-Augmented Generation (RAG)** API with a **semantic caching** layer that checks for semantically similar previous answers before calling the LLM, reducing latency and AWS Bedrock costs. Built with .NET 10 Clean Architecture, AWS Bedrock (Claude 3.5 Sonnet + Titan Embeddings), and Valkey/Redis Stack for HNSW vector search.
 
-## 🚀 Overview
+## How It Works
 
-This system optimizes RAG performance and cost by implementing a semantic cache. It checks for semantically similar previous answers before querying the LLM, significantly reducing latency and AWS Bedrock token costs.
-
-### Key Features
-- **Semantic Caching:** Checks the cache index (Valkey) for similar Q&A pairs before calling the LLM.
-- **Vector Retrieval:** Uses RediSearch HNSW indexes for high-speed vector similarity search (1536-dim).
-- **AWS Bedrock Integration:**
-    - **Amazon Titan:** For generating text embeddings.
-    - **Claude 3.5 Sonnet:** For high-quality, context-aware response generation.
-- **Clean Architecture:** Domain-driven design with Core, Infrastructure, Web, and Test layers.
-- **Observability:** Full OpenTelemetry instrumentation for traces (Jaeger) and metrics (Prometheus).
-- **Auto-Invalidation:** Cache entries are linked to source document chunk IDs and automatically invalidated when documents are updated.
-
-## 🏗️ Architecture
-
-The system follows a 7-step orchestrator workflow:
-1. **Embed:** Convert user query into a vector using Amazon Titan.
-2. **Cache Search:** Search the Semantic Cache index in Valkey (Cosine similarity).
-3. **HIT/MISS:** If a similar answer exists (threshold > 0.85), return it immediately.
-4. **Retrieve:** On a cache miss, retrieve the Top-K relevant chunks from the Document Index.
-5. **Generate:** Send the prompt + context to Claude 3.5 Sonnet via Bedrock.
-6. **Store:** Save the new Q&A pair and source chunk IDs back to the cache (background task).
-7. **Return:** Deliver the final response to the user.
-
-## 🛠️ Tech Stack
-- **Framework:** ASP.NET Core 10 (Minimal APIs)
-- **Vector DB:** Valkey / Redis Stack (RediSearch)
-- **AI/LLM:** AWS Bedrock (Claude 3.5 Sonnet, Titan G1)
-- **Observability:** OpenTelemetry, Jaeger, Prometheus
-- **Testing:** xUnit, FluentAssertions, Moq, Testcontainers
-
-## 🏁 Getting Started
-
-### Prerequisites
-- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-- AWS Credentials with `bedrock:InvokeModel` permissions.
-
-### Setup
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/fchchen/bedrock-semantic-cache.git
-   cd bedrock-semantic-cache
-   ```
-
-2. **Spin up Infrastructure:**
-   ```bash
-   docker-compose up -d
-   ```
-   This starts Valkey (port 6379), Jaeger (port 16686), and Prometheus (port 9090).
-
-3. **Configure AWS:**
-   Ensure your environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`) are set.
-
-4. **Run the API:**
-   ```bash
-   dotnet run --project Web/Web.csproj
-   ```
-
-### API Endpoints
-- `POST /ingest`: Upload document content for indexing.
-- `POST /chat`: Query the RAG system.
-- `GET /health`: Check system and Valkey connectivity.
-- `GET /metrics`: Scrape Prometheus metrics.
-
-## 🧪 Testing
-Run the full suite of unit and integration tests (uses Testcontainers):
-```bash
-dotnet test
+```
+User Query
+    |
+    v
+[1. Embed] ──> Amazon Titan (1536-dim vector)
+    |
+    v
+[2. Cache Search] ──> Valkey HNSW index (cosine similarity)
+    |
+    ├── Score > 0.85 ──> [3a. HIT] ──> Return cached answer
+    |
+    └── Score < 0.85 ──> [3b. MISS]
+                              |
+                              v
+                    [4. Retrieve] ──> Top-K document chunks (min score 0.70)
+                              |
+                              v
+                    [5. Generate] ──> Claude 3.5 Sonnet via Bedrock
+                              |
+                              v
+                    [6. Store] ──> Cache Q&A pair (background task)
+                              |
+                              v
+                    [7. Return] ──> Response + X-Cache-Status header
 ```
 
-## 📊 Observability
-- **Traces:** View detailed request spans at `http://localhost:16686` (Jaeger).
-- **Metrics:** Monitor cache hit ratios and latencies via Prometheus at `http://localhost:9090`.
+Cache entries are linked to their source document chunk IDs. When a document is re-ingested, all cache entries referencing its old chunks are automatically invalidated.
 
-## 📜 License
-This project is licensed under the MIT License.
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| API | ASP.NET Core 10 Minimal APIs |
+| Embeddings | Amazon Titan Text Embeddings v1 (1536-dim) |
+| LLM | Claude 3.5 Sonnet via AWS Bedrock |
+| Vector DB | Valkey / Redis Stack (RediSearch HNSW) |
+| Observability | OpenTelemetry, Jaeger (traces), Prometheus (metrics) |
+| Testing | xUnit, FluentAssertions, Moq, Testcontainers |
+
+## Getting Started
+
+### Prerequisites
+
+- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
+- [Docker](https://www.docker.com/products/docker-desktop/)
+- AWS credentials with `bedrock:InvokeModel` permission
+
+### Setup
+
+```bash
+# Start infrastructure (Valkey, Jaeger, Prometheus)
+docker compose up -d
+
+# Set AWS credentials
+export AWS_ACCESS_KEY_ID=<your-key>
+export AWS_SECRET_ACCESS_KEY=<your-secret>
+export AWS_REGION=us-east-1
+
+# Run the API
+dotnet run --project Web/Web.csproj
+```
+
+### API Usage
+
+**Ingest a document:**
+```bash
+curl -X POST http://localhost:5000/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"documentId": "doc1", "fileName": "guide.txt", "content": "Your document text here..."}'
+```
+
+**Query the RAG system:**
+```bash
+curl -X POST http://localhost:5000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What does the document say about..."}'
+```
+
+The response includes `X-Cache-Status: HIT` or `MISS` and `X-Latency-Ms` headers.
+
+**Re-ingest a document** (invalidates related cache entries):
+```bash
+curl -X POST http://localhost:5000/ingest/doc1/reingest \
+  -H "Content-Type: application/json" \
+  -d '{"documentId": "doc1", "fileName": "guide.txt", "content": "Updated content..."}'
+```
+
+### All Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/chat` | Query the RAG system |
+| `POST` | `/ingest` | Ingest a document (returns 202 with job ID) |
+| `GET` | `/ingest/{id}` | Check ingestion job status |
+| `POST` | `/ingest/{documentId}/reingest` | Re-ingest and invalidate stale cache |
+| `GET` | `/health` | Valkey connectivity check |
+| `GET` | `/metrics` | Prometheus scrape endpoint |
+
+## Architecture
+
+```
+Web/                          Core/                        Infrastructure/
+  Program.cs (DI, endpoints)    ChatOrchestrator             TitanEmbeddingService (Bedrock)
+  CorrelationIdMiddleware       RetrieverService              ClaudeLlmService (Bedrock)
+  SemanticCacheMiddleware       IngestPipeline                ValkeyDocumentStore (RediSearch)
+  ValkeyHealthCheck             BackgroundTaskQueue           ValkeySemanticCache (RediSearch)
+                                JobStore                      SentenceAwareChunker
+```
+
+**Clean Architecture layers:** Core has no dependency on Infrastructure or Web. Infrastructure adapts external systems (AWS, Valkey) to Core interfaces. Web is the HTTP host.
+
+Background work (cache storage, document ingestion) is processed through a `Channel<T>`-backed queue with a hosted service, providing backpressure and graceful shutdown.
+
+## Testing
+
+```bash
+# Full suite (unit + integration, needs Docker for Testcontainers)
+dotnet test
+
+# Unit tests only (no Docker needed)
+dotnet test --filter "FullyQualifiedName~UnitTests"
+```
+
+## Observability
+
+| Tool | URL | Purpose |
+|------|-----|---------|
+| Jaeger | http://localhost:16686 | Distributed traces |
+| Prometheus | http://localhost:9090 | Metrics |
+
+Request correlation IDs propagate through `X-Correlation-Id` headers and Serilog structured logs.
+
+## License
+
+[MIT](https://opensource.org/licenses/MIT)

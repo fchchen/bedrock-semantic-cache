@@ -6,5 +6,6 @@ public interface IDocumentStore
 {
     Task StoreChunkAsync(DocumentChunk chunk);
     Task<List<SimilarityResult<DocumentChunk>>> SearchAsync(float[] vector, int topK);
+    Task<List<string>> GetChunkIdsByDocumentIdAsync(string documentId);
     Task DeleteByDocumentIdAsync(string documentId);
 }

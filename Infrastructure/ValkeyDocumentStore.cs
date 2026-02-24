@@ -107,29 +107,102 @@ public class ValkeyDocumentStore : IDocumentStore
         return chunks;
     }
 
+    public async Task<List<string>> GetChunkIdsByDocumentIdAsync(string documentId)
+    {
+        var escapedId = EscapeTagValue(documentId);
+        var query = $"@DocumentId:{{{escapedId}}}";
+        var chunkIds = new List<string>();
+        const int pageSize = 1000;
+        int offset = 0;
+
+        while (true)
+        {
+            var args = new object[]
+            {
+                IndexName, query, "NOCONTENT",
+                "LIMIT", offset.ToString(), pageSize.ToString()
+            };
+
+            var result = await _db.ExecuteAsync("FT.SEARCH", args);
+            var searchResults = (RedisResult[])result!;
+            var totalCount = (int)searchResults[0];
+
+            for (int i = 1; i < searchResults.Length; i++)
+            {
+                var key = (string)searchResults[i]!;
+                if (key.StartsWith(KeyPrefix))
+                {
+                    chunkIds.Add(key.Substring(KeyPrefix.Length));
+                }
+            }
+
+            offset += pageSize;
+            if (offset >= totalCount)
+                break;
+        }
+
+        return chunkIds;
+    }
+
     public async Task DeleteByDocumentIdAsync(string documentId)
     {
-        var query = $"@DocumentId:{{{documentId}}}";
-        var args = new object[]
-        {
-            IndexName,
-            query,
-            "NOCONTENT"
-        };
+        var escapedId = EscapeTagValue(documentId);
+        var query = $"@DocumentId:{{{escapedId}}}";
+        const int pageSize = 1000;
 
-        var result = await _db.ExecuteAsync("FT.SEARCH", args);
-        var searchResults = (RedisResult[])result!;
-        
-        var keysToDelete = new List<RedisKey>();
-        for (int i = 1; i < searchResults.Length; i++)
+        while (true)
         {
-            keysToDelete.Add((string)searchResults[i]!);
-        }
+            // Always query offset 0 since we delete results each iteration
+            var args = new object[]
+            {
+                IndexName, query, "NOCONTENT",
+                "LIMIT", "0", pageSize.ToString()
+            };
 
-        if (keysToDelete.Any())
-        {
+            var result = await _db.ExecuteAsync("FT.SEARCH", args);
+            var searchResults = (RedisResult[])result!;
+
+            var keysToDelete = new List<RedisKey>();
+            for (int i = 1; i < searchResults.Length; i++)
+            {
+                keysToDelete.Add((string)searchResults[i]!);
+            }
+
+            if (!keysToDelete.Any())
+                break;
+
             await _db.KeyDeleteAsync(keysToDelete.ToArray());
+
+            var totalCount = (int)searchResults[0];
+            if (keysToDelete.Count >= totalCount)
+                break;
         }
+    }
+
+    private static string EscapeTagValue(string value)
+    {
+        // Escape RediSearch special characters for TAG field queries
+        return value
+            .Replace("\\", "\\\\")
+            .Replace("-", "\\-")
+            .Replace(".", "\\.")
+            .Replace("@", "\\@")
+            .Replace(":", "\\:")
+            .Replace("/", "\\/")
+            .Replace("!", "\\!")
+            .Replace("{", "\\{")
+            .Replace("}", "\\}")
+            .Replace("(", "\\(")
+            .Replace(")", "\\)")
+            .Replace("[", "\\[")
+            .Replace("]", "\\]")
+            .Replace("^", "\\^")
+            .Replace("~", "\\~")
+            .Replace("*", "\\*")
+            .Replace("'", "\\'")
+            .Replace("\"", "\\\"")
+            .Replace("|", "\\|")
+            .Replace(" ", "\\ ");
     }
 
     private byte[] GetVectorBytes(float[] vector)
