@@ -12,3 +12,6 @@ Tests
 .gitignore
 docker-compose.yml
 prometheus.yml
+frontend/node_modules
+frontend/dist
+Web/wwwroot

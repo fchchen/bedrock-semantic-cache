@@ -77,6 +77,9 @@ var app = builder.Build();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 // Middlewares
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<SemanticCacheMiddleware>();
@@ -142,6 +145,8 @@ app.MapPost("/ingest/{documentId}/reingest", async (string documentId, IngestReq
 
 app.MapHealthChecks("/health");
 app.MapPrometheusScrapingEndpoint(); // /metrics
+
+app.MapFallbackToFile("index.html");
 
 app.Run();
 
