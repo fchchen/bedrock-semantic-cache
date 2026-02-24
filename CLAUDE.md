@@ -43,22 +43,26 @@ Tests → Web, Infrastructure, Core
 
 ### Background Task Processing
 
-Background work (cache storage after chat, document ingestion) is processed through `IBackgroundTaskQueue` — a `Channel<T>`-backed bounded queue (capacity 100) drained by `BackgroundTaskProcessor` (a hosted service). This provides backpressure and graceful shutdown instead of fire-and-forget `Task.Run`.
+Background work uses two separate typed queues to avoid head-of-line blocking:
+- `IIngestTaskQueue` — for long-running document ingestion jobs (used by `IngestPipeline`)
+- `ICacheTaskQueue` — for fast cache writes after chat responses (used by `ChatOrchestrator`)
+
+Both extend `IBackgroundTaskQueue` (a `Channel<T>`-backed bounded queue, capacity 100) and each has its own `BackgroundTaskProcessor<T>` hosted service. This provides backpressure, graceful shutdown, and ensures slow ingests don't block cache writes.
 
 ### Key Infrastructure Details
 
 - **ValkeyDocumentStore / ValkeySemanticCache**: Both use RediSearch FT.CREATE with HNSW indexes, FLOAT32 vectors, COSINE distance. Vector dimension is configured via `OrchestratorSettings.VectorDimension`. Cache entries link to source chunk IDs for invalidation on re-ingestion. Cleanup queries paginate (no hardcoded LIMIT cap) and escape RediSearch special characters in TAG queries.
-- **TitanEmbeddingService / ClaudeLlmService**: AWS Bedrock calls wrapped with Polly retry (3 attempts, exponential backoff).
+- **TitanEmbeddingService / ClaudeLlmService**: AWS Bedrock calls wrapped with Polly retry (3 attempts, exponential backoff). Payload bytes are serialized once and a fresh `MemoryStream` is created per retry attempt to avoid sending an empty/consumed stream on retries. `TitanEmbeddingService` throws on null/empty embeddings instead of returning an empty array.
 - **IngestPipeline**: Accepts documents, chunks via SentenceAwareChunker (default), embeds chunks in parallel (SemaphoreSlim, max 5 concurrent), stores. Returns immediately (202 Accepted) with job ID tracked in-memory via JobStore.
 - **Cache invalidation**: When a document is re-ingested, old chunks are deleted and cache entries referencing those chunk IDs are invalidated.
 
 ### API Validation & Error Handling
 
-All endpoints validate input and return RFC 7807 Problem Details on errors. `POST /ingest` enforces a 10 MB content size limit. Unhandled exceptions are caught by the global `UseExceptionHandler` middleware.
+All endpoints validate input and return RFC 7807 Problem Details on errors. `POST /chat` enforces a 10,000 character prompt limit. `POST /ingest` enforces a 10 MB content size limit. Unhandled exceptions are caught by the global `UseExceptionHandler` middleware.
 
 ### Health Check
 
-`ValkeyHealthCheck` issues an actual `PING` to Redis (not just checking `IsConnected`).
+`ValkeyHealthCheck` issues an actual `PING` to Redis (not just checking `IsConnected`). The Dockerfile HEALTHCHECK hits the `/health` endpoint via `wget`.
 
 ## Coding Conventions
 
