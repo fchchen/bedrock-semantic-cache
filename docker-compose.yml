@@ -1,0 +1,31 @@
+services:
+  valkey:
+    image: redis/redis-stack-server:latest
+    ports:
+      - "6379:6379"
+      - "8001:8001" # Redis Insight
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686" # Web UI
+      - "4317:4317"  # OTLP gRPC
+      - "4318:4318"  # OTLP HTTP
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+  api:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - ConnectionStrings__Redis=valkey:6379
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+    depends_on:
+      - valkey
+      - jaeger
