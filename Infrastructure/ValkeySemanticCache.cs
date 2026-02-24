@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Core.Entities;
 using Core.Interfaces;
@@ -12,7 +13,9 @@ public class ValkeySemanticCache : ISemanticCache
     private readonly IDatabase _db;
     private const string IndexName = "idx:cache";
     private const string KeyPrefix = "cache:";
+    private const string SearchDialect = "2";
     private readonly TimeSpan _defaultTtl = TimeSpan.FromHours(24);
+    private static readonly ActivitySource ActivitySource = new("BedrockSemanticCache");
 
     public ValkeySemanticCache(IConnectionMultiplexer redis, IOptions<OrchestratorSettings> options)
     {
@@ -45,6 +48,7 @@ public class ValkeySemanticCache : ISemanticCache
 
     public async Task StoreAsync(CacheEntry entry)
     {
+        using var activity = ActivitySource.StartActivity("SemanticCache.StoreAsync");
         var key = $"{KeyPrefix}{entry.Id}";
         
         var sourceChunkIdsJson = JsonSerializer.Serialize(entry.SourceChunkIds);
@@ -75,13 +79,14 @@ public class ValkeySemanticCache : ISemanticCache
 
     public async Task<SimilarityResult<CacheEntry>?> SearchAsync(float[] vector, double minimumScore)
     {
+        using var activity = ActivitySource.StartActivity("SemanticCache.SearchAsync");
         var query = "*=>[KNN 1 @Vector $query_vector AS score]";
         var args = new object[]
         {
             IndexName,
             query,
             "PARAMS", "2", "query_vector", GetVectorBytes(vector),
-            "DIALECT", "2"
+            "DIALECT", SearchDialect
         };
 
         var result = await _db.ExecuteAsync("FT.SEARCH", args);
@@ -89,6 +94,7 @@ public class ValkeySemanticCache : ISemanticCache
 
         if (searchResults.Length < 3)
         {
+            activity?.SetTag("cache.hit", false);
             return null; // No results or expired key with no fields
         }
 
@@ -102,6 +108,7 @@ public class ValkeySemanticCache : ISemanticCache
         }
         catch (InvalidCastException)
         {
+            activity?.SetTag("cache.hit", false);
             return null;
         }
         
@@ -131,16 +138,22 @@ public class ValkeySemanticCache : ISemanticCache
             }
         }
         
+        activity?.SetTag("similarity.score", score);
         if (score >= minimumScore)
         {
+            activity?.SetTag("cache.hit", true);
             return new SimilarityResult<CacheEntry>(entry, score);
         }
 
+        activity?.SetTag("cache.hit", false);
         return null;
     }
 
     public async Task InvalidateByChunkIdsAsync(List<string> chunkIds)
     {
+        using var activity = ActivitySource.StartActivity("SemanticCache.InvalidateByChunkIdsAsync");
+        activity?.SetTag("chunk.ids.count", chunkIds?.Count ?? 0);
+
         if (chunkIds == null || !chunkIds.Any())
         {
             return;
@@ -149,6 +162,7 @@ public class ValkeySemanticCache : ISemanticCache
         var tags = string.Join(" | ", chunkIds.Select(EscapeTagValue));
         var query = $"@SourceChunkIdsTag:{{{tags}}}";
         const int pageSize = 1000;
+        int invalidatedCount = 0;
 
         while (true)
         {
@@ -156,7 +170,8 @@ public class ValkeySemanticCache : ISemanticCache
             var args = new object[]
             {
                 IndexName, query, "NOCONTENT",
-                "LIMIT", "0", pageSize.ToString()
+                "LIMIT", "0", pageSize.ToString(),
+                "DIALECT", SearchDialect
             };
 
             var result = await _db.ExecuteAsync("FT.SEARCH", args);
@@ -172,11 +187,13 @@ public class ValkeySemanticCache : ISemanticCache
                 break;
 
             await _db.KeyDeleteAsync(keysToDelete.ToArray());
+            invalidatedCount += keysToDelete.Count;
 
             var totalCount = (int)searchResults[0];
             if (keysToDelete.Count >= totalCount)
                 break;
         }
+        activity?.SetTag("invalidated.count", invalidatedCount);
     }
 
     private static string EscapeTagValue(string value)

@@ -100,6 +100,37 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task PostChat_WithOversizedPrompt_ReturnsBadRequest()
+    {
+        // Arrange
+        var mockRedis = new Mock<IConnectionMultiplexer>();
+        var mockEmbedding = new Mock<IEmbeddingService>();
+        var mockCache = new Mock<ISemanticCache>();
+        var mockLlm = new Mock<ILlmService>();
+        var mockDocStore = new Mock<IDocumentStore>();
+
+        var client = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.AddSingleton(mockRedis.Object);
+                services.AddSingleton(mockEmbedding.Object);
+                services.AddSingleton(mockCache.Object);
+                services.AddSingleton(mockLlm.Object);
+                services.AddSingleton(mockDocStore.Object);
+            });
+        }).CreateClient();
+
+        var oversizedPrompt = new string('a', 10_001);
+
+        // Act
+        var response = await client.PostAsJsonAsync("/chat", new { Prompt = oversizedPrompt });
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
     public async Task PostIngest_WithEmptyContent_ReturnsBadRequest()
     {
         // Arrange — must mock all dependencies so DI can resolve IIngestPipeline

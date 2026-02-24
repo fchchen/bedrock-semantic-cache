@@ -62,7 +62,9 @@ public class TitanEmbeddingService : IEmbeddingService
             var responseBody = await reader.ReadToEndAsync();
             
             var result = JsonSerializer.Deserialize<TitanEmbeddingResponse>(responseBody);
-            return result?.Embedding ?? Array.Empty<float>();
+            if (result?.Embedding == null || result.Embedding.Length == 0)
+                throw new InvalidOperationException("Bedrock Titan returned null or empty embedding.");
+            return result.Embedding;
         }
         catch (Exception ex)
         {

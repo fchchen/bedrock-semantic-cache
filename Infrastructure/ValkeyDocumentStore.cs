@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Core.Entities;
 using Core.Interfaces;
 using Core.Settings;
@@ -12,6 +13,8 @@ public class ValkeyDocumentStore : IDocumentStore
     private readonly IDatabase _db;
     private const string IndexName = "idx:documents";
     private const string KeyPrefix = "doc:";
+    private const string SearchDialect = "2";
+    private static readonly ActivitySource ActivitySource = new("BedrockSemanticCache");
 
     public ValkeyDocumentStore(IConnectionMultiplexer redis, IOptions<OrchestratorSettings> options)
     {
@@ -45,6 +48,10 @@ public class ValkeyDocumentStore : IDocumentStore
 
     public async Task StoreChunkAsync(DocumentChunk chunk)
     {
+        using var activity = ActivitySource.StartActivity("DocumentStore.StoreChunkAsync");
+        activity?.SetTag("document.id", chunk.DocumentId);
+        activity?.SetTag("chunk.index", chunk.ChunkIndex);
+
         var key = $"{KeyPrefix}{chunk.Id}";
         var hashEntries = new HashEntry[]
         {
@@ -62,13 +69,16 @@ public class ValkeyDocumentStore : IDocumentStore
 
     public async Task<List<SimilarityResult<DocumentChunk>>> SearchAsync(float[] vector, int topK)
     {
+        using var activity = ActivitySource.StartActivity("DocumentStore.SearchAsync");
+        activity?.SetTag("top.k", topK);
+
         var query = $"*=>[KNN {topK} @Vector $query_vector AS score]";
         var args = new object[]
         {
             IndexName,
             query,
             "PARAMS", "2", "query_vector", GetVectorBytes(vector),
-            "DIALECT", "2"
+            "DIALECT", SearchDialect
         };
 
         var result = await _db.ExecuteAsync("FT.SEARCH", args);
@@ -106,11 +116,15 @@ public class ValkeyDocumentStore : IDocumentStore
             chunks.Add(new SimilarityResult<DocumentChunk>(chunk, score));
         }
 
+        activity?.SetTag("retrieved.count", chunks.Count);
         return chunks;
     }
 
     public async Task<List<string>> GetChunkIdsByDocumentIdAsync(string documentId)
     {
+        using var activity = ActivitySource.StartActivity("DocumentStore.GetChunkIdsByDocumentIdAsync");
+        activity?.SetTag("document.id", documentId);
+
         var escapedId = EscapeTagValue(documentId);
         var query = $"@DocumentId:{{{escapedId}}}";
         var chunkIds = new List<string>();
@@ -122,7 +136,8 @@ public class ValkeyDocumentStore : IDocumentStore
             var args = new object[]
             {
                 IndexName, query, "NOCONTENT",
-                "LIMIT", offset.ToString(), pageSize.ToString()
+                "LIMIT", offset.ToString(), pageSize.ToString(),
+                "DIALECT", SearchDialect
             };
 
             var result = await _db.ExecuteAsync("FT.SEARCH", args);
@@ -143,14 +158,19 @@ public class ValkeyDocumentStore : IDocumentStore
                 break;
         }
 
+        activity?.SetTag("chunk.count", chunkIds.Count);
         return chunkIds;
     }
 
     public async Task DeleteByDocumentIdAsync(string documentId)
     {
+        using var activity = ActivitySource.StartActivity("DocumentStore.DeleteByDocumentIdAsync");
+        activity?.SetTag("document.id", documentId);
+
         var escapedId = EscapeTagValue(documentId);
         var query = $"@DocumentId:{{{escapedId}}}";
         const int pageSize = 1000;
+        int deletedTotal = 0;
 
         while (true)
         {
@@ -158,7 +178,8 @@ public class ValkeyDocumentStore : IDocumentStore
             var args = new object[]
             {
                 IndexName, query, "NOCONTENT",
-                "LIMIT", "0", pageSize.ToString()
+                "LIMIT", "0", pageSize.ToString(),
+                "DIALECT", SearchDialect
             };
 
             var result = await _db.ExecuteAsync("FT.SEARCH", args);
@@ -174,11 +195,13 @@ public class ValkeyDocumentStore : IDocumentStore
                 break;
 
             await _db.KeyDeleteAsync(keysToDelete.ToArray());
+            deletedTotal += keysToDelete.Count;
 
             var totalCount = (int)searchResults[0];
             if (keysToDelete.Count >= totalCount)
                 break;
         }
+        activity?.SetTag("deleted.count", deletedTotal);
     }
 
     private static string EscapeTagValue(string value)

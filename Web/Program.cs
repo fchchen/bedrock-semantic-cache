@@ -82,10 +82,14 @@ app.UseMiddleware<SemanticCacheMiddleware>();
 // Endpoints
 const int MaxContentLength = 10 * 1024 * 1024; // 10 MB
 
+const int MaxPromptLength = 10_000;
+
 app.MapPost("/chat", async (ChatRequest request, ChatOrchestrator orchestrator, HttpContext context) =>
 {
     if (string.IsNullOrWhiteSpace(request.Prompt))
         return Results.Problem("Prompt is required.", statusCode: 400);
+    if (request.Prompt.Length > MaxPromptLength)
+        return Results.Problem($"Prompt exceeds maximum length of {MaxPromptLength} characters.", statusCode: 400);
 
     var response = await orchestrator.ProcessChatAsync(request.Prompt);
     context.Response.Headers["X-Cache-Status"] = response.CacheStatus;
